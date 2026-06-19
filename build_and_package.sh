@@ -26,7 +26,7 @@ echo ""
 
 # ── Step 1: Generate Xcode Project ─────────────────────────────────────────
 echo "▶ Step 1/5 — Generating Xcode project with XcodeGen…"
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR/FaceGuard"
 xcodegen generate --spec project.yml
 echo "  ✓ FaceGuard.xcodeproj generated"
 
@@ -35,7 +35,7 @@ echo ""
 echo "▶ Step 2/5 — Archiving (Release build)…"
 mkdir -p "$BUILD_DIR"
 xcodebuild archive \
-    -project "$PROJECT_DIR/$PROJECT_NAME.xcodeproj" \
+    -project "$PROJECT_DIR/FaceGuard/$PROJECT_NAME.xcodeproj" \
     -scheme "$PROJECT_NAME" \
     -configuration Release \
     -archivePath "$ARCHIVE_PATH" \
