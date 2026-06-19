@@ -22,25 +22,25 @@ targets:
     deploymentTarget: "13.0"
 
     sources:
-      - path: FaceGuard/FaceGuard/App
+      - path: FaceGuard/App
         group: App
-      - path: FaceGuard/FaceGuard/Camera
+      - path: FaceGuard/Camera
         group: Camera
-      - path: FaceGuard/FaceGuard/Face
+      - path: FaceGuard/Face
         group: Face
-      - path: FaceGuard/FaceGuard/Security
+      - path: FaceGuard/Security
         group: Security
-      - path: FaceGuard/FaceGuard/UI
+      - path: FaceGuard/UI
         group: UI
-      - path: FaceGuard/FaceGuard/Utilities
+      - path: FaceGuard/Utilities
         group: Utilities
 
     settings:
       base:
         PRODUCT_NAME: FaceGuard
         PRODUCT_BUNDLE_IDENTIFIER: com.yourname.FaceGuard
-        INFOPLIST_FILE: FaceGuard/FaceGuard/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: FaceGuard/FaceGuard/Resources/FaceGuard.entitlements
+        INFOPLIST_FILE: FaceGuard/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: FaceGuard/Resources/FaceGuard.entitlements
         SWIFT_VERSION: "5.9"
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
