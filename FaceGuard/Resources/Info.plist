@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         HIDE DOCK ICON — This makes FaceGuard a pure menu bar app.
+         The app will not appear in the Dock or App Switcher (⌘+Tab).
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>LSUIElement</key>
+    <true/>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         CAMERA USAGE DESCRIPTION
+         Shown by macOS when the app first requests camera access.
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>NSCameraUsageDescription</key>
+    <string>FaceGuard uses your camera to detect who is looking at your screen and automatically locks it if an unauthorized person is detected. All face data stays 100% on your device and is never uploaded.</string>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         APPLE EVENTS — Required for CGSession screen-lock automation.
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>FaceGuard needs this permission to lock your screen when an unauthorized user is detected.</string>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         APP INFO
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>CFBundleName</key>
+    <string>FaceGuard</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>FaceGuard</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.yourname.FaceGuard</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleSignature</key>
+    <string>????</string>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         MINIMUM OS VERSION — macOS 13 Ventura (required for SMAppService)
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         PRINCIPAL CLASS — AppDelegate provides @NSApplicationMain
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         HUMAN INTERFACE — Prevent automatic tabbing of windows.
+    ═══════════════════════════════════════════════════════════════════ -->
+    <key>NSWindowTabbingMode</key>
+    <string>disallowed</string>
+
+</dict>
+</plist>

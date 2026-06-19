@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Camera access — required to use AVCaptureSession with the webcam -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- Apple Events automation — required for CGSession screen-lock command -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- Hardened runtime — required for App Store / Notarisation -->
+    <!-- NOTE: Disable library validation only if you add third-party frameworks -->
+    <!-- <key>com.apple.security.cs.disable-library-validation</key> -->
+    <!-- <true/> -->
+
+</dict>
+</plist>
