@@ -47,13 +47,11 @@ final class MenuBarController: NSObject {
     // MARK: - Initialisation
 
     override init() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItemRetainer = statusItem  // Ensure strong reference
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItemRetainer = statusItem
         super.init()
-        // Ensure the button always shows something even before first status update
         if let button = statusItem.button {
-            button.title = "FG"
-            button.toolTip = "FaceGuard - Face Recognition Security"
+            button.toolTip = "FaceGuard"
         }
         buildMenu()
         statusItem.menu = statusMenu
@@ -255,17 +253,17 @@ final class MenuBarController: NSObject {
             let sizeConf  = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
             let colorConf = NSImage.SymbolConfiguration(paletteColors: [tintColor])
             let combined  = sizeConf.applying(colorConf)
-            
+
             if let coloredImage = sfImage.withSymbolConfiguration(combined) {
                 coloredImage.isTemplate = false
                 button.image = coloredImage
-                button.imagePosition = .imageLeading
-                button.title = "FG"  // Keep text as fallback
+                button.title = ""
+                button.imagePosition = .imageOnly
                 AppLogger.shared.info("MenuBarController: Updated icon to \(symbolName)")
                 return
             }
         }
-        
+
         // Fallback to text-only
         button.image = nil
         button.title = "FG"
