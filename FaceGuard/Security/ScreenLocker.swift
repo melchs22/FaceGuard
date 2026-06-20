@@ -66,29 +66,40 @@ final class ScreenLocker {
         DispatchQueue.main.async { [weak self] in
             WarningOverlayWindow.shared.hide()
 
-            // Try CGSession first (most reliable way to invoke the lock screen).
-            let cgSessionPath = "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession"
-
-            if FileManager.default.fileExists(atPath: cgSessionPath) {
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: cgSessionPath)
-                task.arguments = ["-suspend"]
-                do {
-                    try task.run()
-                    AppLogger.shared.info("ScreenLocker: CGSession -suspend executed.")
-                } catch {
-                    AppLogger.shared.error("ScreenLocker: CGSession failed — \(error). Trying pmset fallback.")
-                    self?.pmsetFallback()
-                }
-            } else {
-                AppLogger.shared.warning("ScreenLocker: CGSession binary not found. Using pmset fallback.")
+            // On modern macOS, CGSession no longer works for screen locking.
+            // Using the undocumented SACLockScreenImmediate API from the login framework
+            // which instantly locks the screen.
+            let loginFramework = "/System/Library/PrivateFrameworks/login.framework/Versions/Current/login"
+            guard let handle = dlopen(loginFramework, RTLD_LAZY) else {
+                AppLogger.shared.error("ScreenLocker: Failed to load login.framework. Using pmset fallback.")
                 self?.pmsetFallback()
+                self?.resetLockingFlag()
+                return
             }
+            
+            defer { dlclose(handle) }
+            
+            guard let sym = dlsym(handle, "SACLockScreenImmediate") else {
+                AppLogger.shared.error("ScreenLocker: Failed to find SACLockScreenImmediate. Using pmset fallback.")
+                self?.pmsetFallback()
+                self?.resetLockingFlag()
+                return
+            }
+            
+            typealias SACLockScreenImmediateType = @convention(c) () -> Void
+            let lockScreen = unsafeBitCast(sym, to: SACLockScreenImmediateType.self)
+            
+            lockScreen()
+            AppLogger.shared.info("ScreenLocker: SACLockScreenImmediate executed.")
+            
+            self?.resetLockingFlag()
+        }
+    }
 
-            // Reset the locking flag after a delay so we don't re-lock immediately.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                self?.isLocking = false
-            }
+    private func resetLockingFlag() {
+        // Reset the locking flag after a delay so we don't re-lock immediately.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.isLocking = false
         }
     }
 

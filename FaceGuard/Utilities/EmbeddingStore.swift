@@ -59,63 +59,99 @@ final class EmbeddingStore {
                                                   withIntermediateDirectories: true)
     }
 
-    // MARK: - Embedding Persistence
+    // MARK: - Multi-User Embedding Paths
 
-    /// Saves the authorised face embedding to disk.
-    /// - Parameter embedding: The averaged facial landmark vector to persist.
-    func saveEmbedding(_ embedding: [Float]) throws {
-        let stored = StoredFaceEmbedding(embedding: embedding)
-        let data = try JSONEncoder().encode(stored)
-        try data.write(to: embeddingFileURL, options: [.atomic])
-        AppLogger.shared.info("Saved face embedding (\(embedding.count) values) to disk.")
+    private func embeddingFileURL(for userIndex: Int) -> URL {
+        let name = userIndex == 0 ? "authorized_face.json" : "authorized_face_\(userIndex).json"
+        return appSupportURL.appendingPathComponent(name)
     }
 
-    /// Loads the stored authorised face embedding from disk.
-    /// - Returns: The stored embedding, or nil if none has been saved.
-    func loadEmbedding() -> StoredFaceEmbedding? {
-        guard let data = try? Data(contentsOf: embeddingFileURL),
-              let stored = try? JSONDecoder().decode(StoredFaceEmbedding.self, from: data)
-        else {
-            AppLogger.shared.info("No existing face embedding found.")
-            return nil
+    private func thumbnailFileURL(for userIndex: Int) -> URL {
+        let name = userIndex == 0 ? "enrolled_thumbnail.png" : "enrolled_thumbnail_\(userIndex).png"
+        return appSupportURL.appendingPathComponent(name)
+    }
+
+    /// Saves an embedding pool for a specific user slot (0 = primary, 1 = secondary).
+    func savePool(_ pool: EmbeddingPool, forUser userIndex: Int = 0) throws {
+        let data = try JSONEncoder().encode(pool)
+        try data.write(to: embeddingFileURL(for: userIndex), options: [.atomic])
+        AppLogger.shared.info("Saved EmbeddingPool for user \(userIndex) (Master + \(pool.supplementals.count) supplementals).")
+    }
+
+    /// Loads all stored embedding pools (primary + any secondary users).
+    /// Automatically migrates old `StoredFaceEmbedding` format to `EmbeddingPool`.
+    func loadAllPools() -> [EmbeddingPool] {
+        var results: [EmbeddingPool] = []
+        for i in 0..<2 {
+            let url = embeddingFileURL(for: i)
+            guard let data = try? Data(contentsOf: url) else { continue }
+
+            if let pool = try? JSONDecoder().decode(EmbeddingPool.self, from: data) {
+                results.append(pool)
+            } else if let legacy = try? JSONDecoder().decode(StoredFaceEmbedding.self, from: data) {
+                // Migration path: Convert legacy StoredFaceEmbedding to EmbeddingPool
+                var newPool = EmbeddingPool(master: legacy.embedding)
+                newPool.lastUpdated = legacy.capturedAt
+                results.append(newPool)
+                
+                // Save the migrated pool right away
+                try? savePool(newPool, forUser: i)
+                AppLogger.shared.info("Migrated legacy face embedding for user \(i) to new EmbeddingPool format.")
+            }
         }
-        AppLogger.shared.info("Loaded face embedding (\(stored.embedding.count) values) captured at \(stored.capturedAt).")
-        return stored
+        AppLogger.shared.info("Loaded \(results.count) authorized face pool(s).")
+        return results
     }
 
-    /// Deletes the stored embedding and thumbnail from disk.
+    /// Legacy single load — returns first stored pool.
+    func loadPool() -> EmbeddingPool? {
+        return loadAllPools().first
+    }
+
+    /// Deletes all stored embeddings and thumbnails.
     func deleteEmbedding() {
-        try? FileManager.default.removeItem(at: embeddingFileURL)
-        try? FileManager.default.removeItem(at: thumbnailFileURL)
-        AppLogger.shared.info("Deleted stored face embedding and thumbnail.")
+        for i in 0..<2 {
+            try? FileManager.default.removeItem(at: embeddingFileURL(for: i))
+            try? FileManager.default.removeItem(at: thumbnailFileURL(for: i))
+        }
+        AppLogger.shared.info("Deleted all stored face embeddings and thumbnails.")
     }
 
-    /// Returns true if an embedding has been saved.
+    /// Returns true if at least one embedding has been saved.
     var hasStoredEmbedding: Bool {
-        FileManager.default.fileExists(atPath: embeddingFileURL.path)
+        FileManager.default.fileExists(atPath: embeddingFileURL(for: 0).path)
     }
 
     // MARK: - Thumbnail Persistence
 
-    /// Saves an NSImage as the enrolled face thumbnail.
-    func saveThumbnail(_ image: NSImage) {
+    /// Saves an NSImage as the enrolled face thumbnail for a given user slot.
+    func saveThumbnail(_ image: NSImage, forUser userIndex: Int = 0) {
         guard let tiffData = image.tiffRepresentation,
               let bitmap   = NSBitmapImageRep(data: tiffData),
               let pngData  = bitmap.representation(using: .png, properties: [:]) else {
             AppLogger.shared.error("Failed to convert thumbnail to PNG.")
             return
         }
-        try? pngData.write(to: thumbnailFileURL, options: .atomic)
-        AppLogger.shared.info("Saved enrolled thumbnail.")
+        try? pngData.write(to: thumbnailFileURL(for: userIndex), options: .atomic)
+        AppLogger.shared.info("Saved enrolled thumbnail for user \(userIndex).")
     }
 
-    /// Loads the enrolled face thumbnail from disk.
-    func loadThumbnail() -> NSImage? {
-        guard FileManager.default.fileExists(atPath: thumbnailFileURL.path),
-              let image = NSImage(contentsOf: thumbnailFileURL)
+    /// Legacy single-user thumbnail save.
+    func saveThumbnail(_ image: NSImage) {
+        saveThumbnail(image, forUser: 0)
+    }
+
+    /// Loads the enrolled face thumbnail from disk for a given user slot.
+    func loadThumbnail(forUser userIndex: Int = 0) -> NSImage? {
+        let url = thumbnailFileURL(for: userIndex)
+        guard FileManager.default.fileExists(atPath: url.path),
+              let image = NSImage(contentsOf: url)
         else { return nil }
         return image
     }
+
+    /// Legacy single-user thumbnail load.
+    func loadThumbnail() -> NSImage? { loadThumbnail(forUser: 0) }
 
     // MARK: - Intruder Snapshots
 
@@ -139,5 +175,12 @@ final class EmbeddingStore {
         }
         try? pngData.write(to: url, options: .atomic)
         AppLogger.shared.info("Saved intruder snapshot: \(name)")
+
+        // Record into EventLog
+        EventLog.shared.record(SecurityEvent(
+            type: reason == "unauthorized_face" ? .unauthorizedFace : .noFaceLock,
+            details: reason,
+            snapshotFilename: name
+        ))
     }
 }

@@ -21,7 +21,7 @@ enum FaceDetectionResult {
     /// A face was found but landmarks could not be extracted (low-quality frame).
     case faceFoundNoLandmarks
     /// A face was found and an embedding was successfully extracted.
-    case embedding([Float], boundingBox: CGRect, image: NSImage?)
+    case embedding([Float], boundingBox: CGRect, image: NSImage?, landmarks: VNFaceLandmarks2D?)
 }
 
 // MARK: - FaceDetector
@@ -90,7 +90,15 @@ final class FaceDetector {
         // Step 4: Optionally capture a face crop thumbnail for intruder logging.
         let faceImage = cropFaceImage(from: pixelBuffer, boundingBox: observation.boundingBox)
 
-        return .embedding(embedding, boundingBox: observation.boundingBox, image: faceImage)
+        return .embedding(embedding, boundingBox: observation.boundingBox, image: faceImage, landmarks: observation.landmarks)
+    }
+
+    /// Returns the number of faces detected in a frame (used for privacy blur detection).
+    func countFaces(in pixelBuffer: CVPixelBuffer) -> Int {
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+        let request = VNDetectFaceRectanglesRequest()
+        try? handler.perform([request])
+        return request.results?.count ?? 0
     }
 
     // MARK: - Embedding Construction

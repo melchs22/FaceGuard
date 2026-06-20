@@ -5,11 +5,17 @@
 //  • Frame skipping (processes every 3rd frame to reduce CPU load)
 //  • Dispatches detection + matching to a low-priority background queue
 //  • Manages the "no face" countdown timer
-//  • Manages the "stranger cooldown" (unauthorised face must persist for 2s before lock)
+//  • Manages the "stranger cooldown" (unauthorised face must persist for N s before lock)
+//  • Multi-face detection → blur (second face nearby = privacy blur)
+//  • Full lock when user walks away (no face detected)
+//  • Meeting mode — skips all protection when a video call app is running
+//  • Auto-pause media when user walks away
+//  • Alarm after 3 consecutive unauthorized access events
 //  • Notifies MenuBarController and ScreenLocker of status changes
 
 import Foundation
 import AppKit
+import Vision
 
 // MARK: - Protection Status
 
@@ -20,6 +26,7 @@ enum ProtectionStatus {
     case noFace(secondsRemaining: Double)
     case paused
     case enrolling
+    case blurActive   // second face detected nearby
 }
 
 // MARK: - FrameProcessor
@@ -56,6 +63,10 @@ final class FrameProcessor {
     // MARK: - State
 
     private var lastStatus: ProtectionStatus = .noFace(secondsRemaining: 0)
+    /// Whether media was paused by FaceGuard (so we know to resume it).
+    private var didPauseMedia = false
+    
+    private let livenessDetector = LivenessDetector()
 
     // MARK: - Initialisation
 
@@ -70,6 +81,7 @@ final class FrameProcessor {
         noFaceStartTime       = nil
         unauthorisedStartTime = nil
         faceMatcher.resetBuffer()
+        livenessDetector.reset()
         frameCounter = 0
     }
 
@@ -88,53 +100,139 @@ final class FrameProcessor {
     // MARK: - Detection Logic
 
     private func runDetection(on pixelBuffer: CVPixelBuffer) {
-        // If protection is paused, just update the status and bail.
         guard Settings.shared.isProtectionActive else {
             broadcast(.paused)
             return
         }
 
+        if MeetingModeDetector.shared.isMeetingActive {
+            broadcast(.paused)
+            return
+        }
+
         let detectionResult = faceDetector.detect(in: pixelBuffer)
+        let faceCount = faceDetector.countFaces(in: pixelBuffer)
 
         switch detectionResult {
 
         case .noFace:
-            // Reset stranger cooldown since we no longer see any face.
             unauthorisedStartTime = nil
-            handleNoFace(image: nil)
+            AlarmManager.shared.resetFailures()
+            livenessDetector.reset()
+
+            if PrivacyBlurWindow.shared.isVisible {
+                PrivacyBlurWindow.shared.hide()
+                broadcast(.noFace(secondsRemaining: Settings.shared.noFaceLockDelay))
+                EventLog.shared.record(SecurityEvent(type: .blurDeactivated, details: "No face detected"))
+            }
+            handleNoFace()
 
         case .faceFoundNoLandmarks:
-            // A face is present but landmarks failed — treat conservatively as noFace.
             unauthorisedStartTime = nil
-            handleNoFace(image: nil)
+            handleNoFace()
 
-        case .embedding(let embedding, _, let image):
-            // A face was found with a valid embedding — reset the noFace timer.
+        case .embedding(let embedding, let bbox, let image, let landmarks):
             noFaceStartTime = nil
+            if didPauseMedia {
+                didPauseMedia = false
+                MediaController.shared.resumeMedia()
+            }
+            
+            // 1. Evaluate Liveness
+            let liveness = livenessDetector.processFrame(pixelBuffer: pixelBuffer, landmarks: landmarks, embedding: embedding)
+            var isSpoof = false
+            var livenessConfirmed = false
 
-            let decision = faceMatcher.evaluate(liveEmbedding: embedding)
+            switch liveness {
+            case .spoof(let reason):
+                isSpoof = true
+                AppLogger.shared.warning("FrameProcessor: SPOOF DETECTED — \(reason.rawValue)")
+            case .live(let confidence):
+                livenessConfirmed = true
+                AppLogger.shared.debug("FrameProcessor: Liveness confirmed (\(String(format: "%.2f", confidence)))")
+            case .inconclusive:
+                break // Wait for more frames
+            }
 
-            switch decision {
-            case .authorised(let score):
+            if isSpoof {
                 unauthorisedStartTime = nil
-                broadcast(.authorized(score: score))
+                if PrivacyBlurWindow.shared.isVisible { PrivacyBlurWindow.shared.hide() }
+                if let img = image { EmbeddingStore.shared.saveIntruderSnapshot(img, reason: "spoof_detected") }
+                AlarmManager.shared.recordUnauthorizedAttempt()
+                onLockRequired?("spoof_detected")
+                broadcast(.unauthorized(score: 0.0))
+                return // Do NOT proceed to matching or adaptation
+            }
+            
+            // 2. Face Matching
+            let match = faceMatcher.evaluate(liveEmbedding: embedding)
+
+            switch match.decision {
+            case .authorised(let score, let userSlot):
+                unauthorisedStartTime = nil
+                AlarmManager.shared.resetFailures()
+                
+                // 3. Adaptive Learning (only if liveness was fully confirmed)
+                if livenessConfirmed {
+                    let pool = faceMatcher.authorizedPools[userSlot]
+                    
+                    AdaptiveLearner.shared.recordSuccessfulFrame(
+                        similarity: match.rawScore,
+                        embedding: embedding,
+                        livenessConfirmed: true,
+                        pool: pool
+                    ) { [weak self] adaptedPool in
+                        guard let self = self, let newPool = adaptedPool else { return }
+                        
+                        // If AdaptiveLearner returned a modified pool, save it and update FaceMatcher
+                        do {
+                            try EmbeddingStore.shared.savePool(newPool, forUser: userSlot)
+                            // Note: we update faceMatcher on the main/processing queue
+                            self.faceMatcher.authorizedPools[userSlot] = newPool
+                            AppLogger.shared.info("FrameProcessor: Saved adapted profile for user \(userSlot).")
+                        } catch {
+                            AppLogger.shared.error("FrameProcessor: Failed to save adapted pool — \(error)")
+                        }
+                    }
+                }
+
+                // Check for secondary faces
+                if faceCount > 1 {
+                    if !PrivacyBlurWindow.shared.isVisible {
+                        PrivacyBlurWindow.shared.show()
+                        EventLog.shared.record(SecurityEvent(type: .blurActivated, details: "Secondary face detected"))
+                    }
+                    broadcast(.blurActive)
+                } else {
+                    if PrivacyBlurWindow.shared.isVisible {
+                        PrivacyBlurWindow.shared.hide()
+                        EventLog.shared.record(SecurityEvent(type: .blurDeactivated, details: "Authorized user only"))
+                    }
+                    broadcast(.authorized(score: score))
+                    EventLog.shared.record(SecurityEvent(type: .authorizedAccess))
+                }
 
             case .unauthorised(let score):
+                if PrivacyBlurWindow.shared.isVisible { PrivacyBlurWindow.shared.hide() }
                 handleUnauthorisedFace(score: score, image: image)
 
             case .noFace:
-                handleNoFace(image: nil)
+                handleNoFace()
             }
         }
     }
-
     // MARK: - No-Face Handling
 
-    private func handleNoFace(image: NSImage?) {
+    private func handleNoFace() {
         let delay = Settings.shared.noFaceLockDelay
 
         if noFaceStartTime == nil {
             noFaceStartTime = Date()
+            // Pause media as soon as user leaves.
+            if !didPauseMedia {
+                didPauseMedia = true
+                MediaController.shared.pauseMedia()
+            }
         }
 
         let elapsed   = Date().timeIntervalSince(noFaceStartTime!)
@@ -165,10 +263,11 @@ final class FrameProcessor {
         if elapsed >= cooldown {
             unauthorisedStartTime = nil
             AppLogger.shared.warning("FrameProcessor: Unauthorised face persisted for \(cooldown)s — triggering lock.")
-            // Save snapshot if enabled.
+            // Save snapshot if enabled (silently, in background).
             if let img = image {
                 EmbeddingStore.shared.saveIntruderSnapshot(img, reason: "unauthorized_face")
             }
+            AlarmManager.shared.recordUnauthorizedAttempt()
             onLockRequired?("unauthorized_face")
         } else {
             broadcast(.unauthorized(score: score))
@@ -178,7 +277,6 @@ final class FrameProcessor {
     // MARK: - Status Broadcasting
 
     private func broadcast(_ status: ProtectionStatus) {
-        // Avoid spamming identical updates to keep UI responsive.
         DispatchQueue.main.async { [weak self] in
             self?.onStatusChange?(status)
         }

@@ -10,11 +10,15 @@ let package = Package(
             name: "FaceGuard",
             path: "FaceGuard",
             sources: ["App", "Camera", "Face", "Security", "UI", "Utilities"],
-            resources: [
-                .copy("Resources/Info.plist")
-            ],
             swiftSettings: [
                 .define("DEBUG", .when(configuration: .debug))
+            ],
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("Vision"),
+                .linkedFramework("CoreImage"),
+                .linkedFramework("ServiceManagement")
             ]
         )
     ]

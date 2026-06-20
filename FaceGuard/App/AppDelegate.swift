@@ -13,11 +13,20 @@
 import AppKit
 import AVFoundation
 import ServiceManagement
+import UserNotifications
+import LocalAuthentication
 
 // MARK: - AppDelegate
 
-@NSApplicationMain
+@main
 final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
+    }
 
     // MARK: - Core Subsystems
 
@@ -27,9 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - UI Controllers
 
-    private var menuBarController:        MenuBarController!
-    private var enrollmentWindowController: EnrollmentWindowController!
+    private var menuBarController:           MenuBarController!
+    private var enrollmentWindowController:  EnrollmentWindowController!
     private var preferencesWindowController: PreferencesWindowController!
+    private var dashboardWindowController:   DashboardWindowController!
 
     // MARK: - Global Event Monitor (panic shortcut)
 
@@ -42,17 +52,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - applicationDidFinishLaunching
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hide dock icon — we're a menu bar-only app.
-        NSApp.setActivationPolicy(.accessory)
+        // Show dock icon.
+        NSApp.setActivationPolicy(.regular)
 
         AppLogger.shared.info("FaceGuard: Application launched.")
 
         // Set up subsystems
         setupMenuBar()
         setupPreferencesWindow()
+        setupDashboard()
         setupNotificationObservers()
         setupPanicShortcut()
         startPauseCheckTimer()
+        requestNotificationPermission()
 
         // Request camera permission, then continue startup.
         CameraManager.requestPermission { [weak self] granted in
@@ -88,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarController = MenuBarController()
 
         menuBarController.onReEnroll = { [weak self] in
-            self?.openEnrollmentWindow(autoStart: false)
+            self?.authenticateThenEnroll(userSlot: 0)
         }
         menuBarController.onPause = { [weak self] minutes in
             guard let self = self else { return }
@@ -102,6 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return }
             Settings.shared.resumeProtection()
             self.frameProcessor.reset()
+            // Re-wire protection callbacks (they may have been cleared during enrollment)
+            self.rewireProtectionCallbacks()
+            // Ensure camera is running
+            if !self.cameraManager.isRunning { self.cameraManager.startCapture() }
+            self.menuBarController.updateStatus(.noFace(secondsRemaining: Settings.shared.noFaceLockDelay))
             AppLogger.shared.info("AppDelegate: Protection resumed.")
         }
         menuBarController.onViewLog = {
@@ -116,10 +133,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Biometric / Password Authentication
+
+    /// Authenticates the user with Touch ID or device password before allowing
+    /// sensitive operations like re-enrollment.
+    private func authenticateThenEnroll(userSlot: Int) {
+        let context = LAContext()
+        var error: NSError?
+
+        // Determine the best available method
+        let policy: LAPolicy = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+            ? .deviceOwnerAuthenticationWithBiometrics
+            : .deviceOwnerAuthentication
+
+        let reason = userSlot == 0
+            ? "Authenticate to re-enroll your face in FaceGuard"
+            : "Authenticate to enroll a second authorized user"
+
+        context.evaluatePolicy(policy, localizedReason: reason) { [weak self] success, authError in
+            DispatchQueue.main.async {
+                if success {
+                    AppLogger.shared.info("AppDelegate: Biometric/password auth passed for enrollment (slot \(userSlot)).")
+                    self?.openEnrollmentWindow(autoStart: false, userSlot: userSlot)
+                } else {
+                    let msg = authError?.localizedDescription ?? "Authentication failed."
+                    AppLogger.shared.warning("AppDelegate: Authentication failed — \(msg)")
+                    let alert = NSAlert()
+                    alert.messageText     = "Authentication Failed"
+                    alert.informativeText = msg
+                    alert.alertStyle      = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
     // MARK: - Preferences Window
 
     private func setupPreferencesWindow() {
         preferencesWindowController = PreferencesWindowController()
+    }
+
+    // MARK: - Dashboard
+
+    private func setupDashboard() {
+        dashboardWindowController = DashboardWindowController()
+    }
+
+    // MARK: - Notifications
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
     // MARK: - Notification Observers
@@ -137,6 +202,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name:     .openPreferencesWindow,
             object:   nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOpenDashboard),
+            name:     .openDashboardWindow,
+            object:   nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleEnrollSecondUser),
+            name:     .enrollSecondUser,
+            object:   nil
+        )
     }
 
     @objc private func handleOpenEnrollment() {
@@ -145,6 +222,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleOpenPreferences() {
         preferencesWindowController.showPreferences()
+    }
+
+    @objc private func handleOpenDashboard() {
+        dashboardWindowController.showDashboard()
+    }
+
+    @objc private func handleEnrollSecondUser() {
+        authenticateThenEnroll(userSlot: 1)
     }
 
     // MARK: - Panic Shortcut (⌘ + Shift + L)
@@ -164,7 +249,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startProtection() {
         // Load the authorised embedding into the matcher.
         faceMatcher.loadEmbedding()
+        rewireProtectionCallbacks()
+        cameraManager.startCapture()
+        menuBarController.updateStatus(.noFace(secondsRemaining: Settings.shared.noFaceLockDelay))
+        AppLogger.shared.info("AppDelegate: Protection started.")
+    }
 
+    /// Wires the FrameProcessor callbacks. Called on start AND resume.
+    private func rewireProtectionCallbacks() {
         // Route camera frames to FrameProcessor.
         cameraManager.onFrame = { [weak self] pixelBuffer in
             self?.frameProcessor.processFrame(pixelBuffer)
@@ -172,25 +264,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // FrameProcessor tells us what it sees.
         frameProcessor.onStatusChange = { [weak self] status in
-            self?.menuBarController.updateStatus(status)
+            guard let self = self else { return }
+            self.menuBarController.updateStatus(status)
         }
 
         // FrameProcessor triggers a lock when needed.
         frameProcessor.onLockRequired = { [weak self] reason in
             guard let self = self else { return }
-            // Only lock if protection is still active (not paused).
             guard Settings.shared.isProtectionActive else { return }
             ScreenLocker.shared.lock(reason: reason)
         }
-
-        cameraManager.startCapture()
-        menuBarController.updateStatus(.noFace(secondsRemaining: Settings.shared.noFaceLockDelay))
-        AppLogger.shared.info("AppDelegate: Protection started.")
     }
 
     // MARK: - Enrollment Window
 
-    private func openEnrollmentWindow(autoStart: Bool) {
+    private func openEnrollmentWindow(autoStart: Bool, userSlot: Int = 0) {
         // Pause protection during enrollment so the frame callback is taken over.
         frameProcessor.onStatusChange = nil
         frameProcessor.onLockRequired = nil
@@ -201,9 +289,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             enrollmentWindowController = EnrollmentWindowController(cameraManager: cameraManager)
         }
 
+        enrollmentWindowController.userSlot = userSlot
+
         enrollmentWindowController.onEnrollmentComplete = { [weak self] in
             guard let self = self else { return }
-            AppLogger.shared.info("AppDelegate: Enrollment complete. Starting protection.")
+            AppLogger.shared.info("AppDelegate: Enrollment complete (slot \(userSlot)). Starting protection.")
+            EventLog.shared.record(SecurityEvent(type: .enrollmentComplete, details: "User slot \(userSlot)"))
             // Small delay so the user sees the success banner.
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 self.startProtection()

@@ -3,7 +3,6 @@ options:
   bundleIdPrefix: com.yourname
   deploymentTarget:
     macOS: "13.0"
-  xcodeVersion: "16.0"
   createIntermediateGroups: true
 
 settings:
@@ -34,6 +33,8 @@ targets:
         group: UI
       - path: Utilities
         group: Utilities
+      - path: Resources/AppIcon.icns
+        group: Resources
 
     settings:
       base:

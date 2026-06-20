@@ -127,25 +127,49 @@ struct EnrollmentView: View {
             ZStack {
                 // Live camera feed
                 CameraPreviewView(session: cameraSession)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-
-                // Circular face guide overlay
-                Circle()
-                    .stroke(
-                        LinearGradient(colors: [.cyan, .purple], startPoint: .top, endPoint: .bottom),
-                        style: StrokeStyle(lineWidth: 3, dash: [8, 4])
-                    )
+                    .clipShape(Circle())
                     .frame(width: geo.size.height * 0.72, height: geo.size.height * 0.72)
-                    .opacity(0.8)
-                    .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isEnrolling)
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
 
-                // Corner scan lines
-                ForEach(0..<4) { i in
-                    cornerBracket(for: i, size: geo.size)
+                // Outer progress ring (like Face ID)
+                if case let .enrolling(progress, phase, _) = viewModel.state {
+                    let totalPhases = Double(EnrollmentPhase.allCases.count)
+                    let baseProgress = Double(phase.rawValue) / totalPhases
+                    let phaseProgress = progress * (1.0 / totalPhases)
+                    let totalProgress = baseProgress + phaseProgress
+
+                    Circle()
+                        .trim(from: 0.0, to: CGFloat(totalProgress))
+                        .stroke(
+                            LinearGradient(colors: [.cyan, .purple], startPoint: .top, endPoint: .bottom),
+                            style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                        )
+                        .frame(width: geo.size.height * 0.76, height: geo.size.height * 0.76)
+                        .rotationEffect(.degrees(-90))
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                        .animation(.easeInOut(duration: 0.2), value: totalProgress)
+                        
+                    // Guide lines for phases
+                    ForEach(0..<Int(totalPhases), id: \.self) { i in
+                        let angle = Double(i) * (360.0 / totalPhases) - 90
+                        Rectangle()
+                            .fill(Color(hex: "#24243e")) // matches background
+                            .frame(width: 8, height: 16)
+                            .offset(y: -(geo.size.height * 0.38))
+                            .rotationEffect(.degrees(angle))
+                            .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                    }
+                } else {
+                    // Idle dashed ring
+                    Circle()
+                        .stroke(
+                            LinearGradient(colors: [.cyan, .purple], startPoint: .top, endPoint: .bottom),
+                            style: StrokeStyle(lineWidth: 3, dash: [8, 4])
+                        )
+                        .frame(width: geo.size.height * 0.72, height: geo.size.height * 0.72)
+                        .opacity(0.8)
+                        .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isEnrolling)
+                        .position(x: geo.size.width / 2, y: geo.size.height / 2)
                 }
 
                 // Instructions overlay
@@ -160,35 +184,29 @@ struct EnrollmentView: View {
     }
 
     private func cornerBracket(for index: Int, size: CGSize) -> some View {
-        let w: CGFloat = 24, t: CGFloat = 3
-        let xSigns: [CGFloat] = [-1,  1,  1, -1]
-        let ySigns: [CGFloat] = [-1, -1,  1,  1]
-        let xs = xSigns[index]
-        let ys = ySigns[index]
-        let inset: CGFloat = 12
-
-        return ZStack {
-            Rectangle()
-                .fill(Color.cyan.opacity(0.9))
-                .frame(width: w, height: t)
-                .offset(x: xs * (size.width/2 - inset - w/2),
-                        y: ys * (size.height/2 - inset))
-            Rectangle()
-                .fill(Color.cyan.opacity(0.9))
-                .frame(width: t, height: w)
-                .offset(x: xs * (size.width/2 - inset),
-                        y: ys * (size.height/2 - inset - w/2))
-        }
+        EmptyView() // Removed corner brackets for Face ID style circular view
     }
 
     private func instructionsLabel(size: CGSize) -> some View {
-        Text("Centre your face in the circle")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(.white.opacity(0.7))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+        let text: String
+        switch viewModel.state {
+        case .idle:
+            text = "Centre your face in the circle"
+        case .enrolling(_, _, let instruction):
+            text = instruction
+        case .lowLight:
+            text = "Move to a brighter environment"
+        default:
+            text = ""
+        }
+        
+        return Text(text)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(.white.opacity(0.9))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
             .background(.ultraThinMaterial, in: Capsule())
-            .offset(y: size.height / 2 - 20)
+            .offset(y: size.height / 2 + 10)
     }
 
     // MARK: - Status Section
@@ -198,8 +216,11 @@ struct EnrollmentView: View {
         switch viewModel.state {
         case .idle:
             idleControls
-        case .enrolling(let progress, let countdown):
-            enrollingUI(progress: progress, countdown: countdown)
+        case .enrolling(let progress, let phase, _):
+            enrollingUI(progress: progress, phase: phase, isLowLight: false)
+        case .lowLight(let progress):
+            // Fallback since lowLight state doesn't have phase yet, just mock it
+            enrollingUI(progress: progress, phase: .center, isLowLight: true)
         case .success:
             successUI
         case .failed(let reason):
@@ -224,32 +245,21 @@ struct EnrollmentView: View {
         }
     }
 
-    private func enrollingUI(progress: Double, countdown: Int) -> some View {
+    private func enrollingUI(progress: Double, phase: EnrollmentPhase, isLowLight: Bool) -> some View {
         VStack(spacing: 16) {
-            // Countdown
-            Text("Hold still… capturing in \(countdown)…")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
-
-            // Progress bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.white.opacity(0.12))
-                        .frame(height: 8)
-                    Capsule()
-                        .fill(LinearGradient(colors: [.cyan, .purple], startPoint: .leading, endPoint: .trailing))
-                        .frame(width: geo.size.width * CGFloat(progress), height: 8)
-                        .animation(.linear(duration: 0.3), value: progress)
-                }
+            if isLowLight {
+                Text("Low Light Detected")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(.yellow)
+            } else {
+                Text("Step \(phase.rawValue + 1) of 4")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
             }
-            .frame(height: 8)
-
-            Text("\(Int(progress * 100))% captured")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
         }
+        .frame(height: 40)
     }
+
 
     private var successUI: some View {
         VStack(spacing: 16) {

@@ -220,8 +220,8 @@ struct PreferencesView: View {
                 Text(EmbeddingStore.shared.hasStoredEmbedding ? "Face Enrolled" : "Not Enrolled")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
-                if let stored = EmbeddingStore.shared.loadEmbedding() {
-                    Text("Enrolled on \(stored.capturedAt.formatted(date: .abbreviated, time: .shortened))")
+                if let stored = EmbeddingStore.shared.loadPool() {
+                    Text("Enrolled on \(stored.lastUpdated.formatted(date: .abbreviated, time: .shortened))")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
                 }
@@ -274,7 +274,7 @@ struct PreferencesView: View {
                     .foregroundColor(.cyan)
                     .frame(width: 50, alignment: .trailing)
             }
-            Slider(value: value, in: range, step: 1) { _ in onChange() }
+            Slider(value: value, in: range) { _ in onChange() }
                 .accentColor(.cyan)
             Text(hint)
                 .font(.system(size: 11))
@@ -322,9 +322,4 @@ struct PreferencesView: View {
     }
 }
 
-// MARK: - Notification Names
 
-extension Notification.Name {
-    static let openEnrollmentWindow = Notification.Name("FaceGuard.openEnrollmentWindow")
-    static let openPreferencesWindow = Notification.Name("FaceGuard.openPreferencesWindow")
-}

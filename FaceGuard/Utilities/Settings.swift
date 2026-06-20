@@ -135,6 +135,51 @@ final class Settings {
         pauseExpiresAt = nil
     }
 
+    // MARK: - New Feature Settings
+
+    /// Night mode — boost camera sensitivity in low light.
+    @UserDefault("night_mode_enabled", defaultValue: false)
+    var nightModeEnabled: Bool
+
+    /// Auto-pause music/video when user walks away.
+    @UserDefault("auto_pause_media_enabled", defaultValue: true)
+    var autoPauseMediaEnabled: Bool
+
+    /// Meeting mode — disable protection during video calls.
+    @UserDefault("meeting_mode_enabled", defaultValue: true)
+    var meetingModeEnabled: Bool
+
+    /// Number of authorized users enrolled (up to 2).
+    @UserDefault("authorized_user_count", defaultValue: 1)
+    var authorizedUserCount: Int
+    
+    // MARK: - Liveness Detection Settings
+
+    @UserDefault("liveness_blink_enabled", defaultValue: true)
+    var livenessBlinkEnabled: Bool
+
+    @UserDefault("liveness_movement_enabled", defaultValue: true)
+    var livenessMovementEnabled: Bool
+
+    @UserDefault("liveness_texture_enabled", defaultValue: true)
+    var livenessTextureEnabled: Bool
+
+    @UserDefault("liveness_depth_enabled", defaultValue: true)
+    var livenessDepthEnabled: Bool
+
+    @UserDefault("liveness_sensitivity", defaultValue: 0.70)
+    var livenessSensitivity: Double
+
+    // MARK: - Adaptive Learning Settings
+
+    @UserDefault("adaptive_learning_enabled", defaultValue: true)
+    var adaptiveLearningEnabled: Bool
+
+    /// Speed of learning (e.g., 0.05 slow, 0.10 normal, 0.20 fast)
+    @UserDefault("learning_speed_rate", defaultValue: 0.10)
+    var learningSpeedRate: Float
+
+
     // MARK: - Reset
 
     /// Resets all settings to their default values.
@@ -150,5 +195,9 @@ final class Settings {
         launchAtLogin           = false
         isPaused                = false
         pauseExpiresAt          = nil
+        nightModeEnabled        = false
+        autoPauseMediaEnabled   = true
+        meetingModeEnabled      = true
+        authorizedUserCount     = 1
     }
 }

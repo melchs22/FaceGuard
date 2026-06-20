@@ -112,6 +112,11 @@ final class AppLogger {
 
     /// Opens the log directory in Finder.
     func openLogDirectoryInFinder() {
-        NSWorkspace.shared.open(logFileURL.deletingLastPathComponent())
+        let logDir = logFileURL.deletingLastPathComponent().path
+        // Use open command which works in both GUI and command-line environments
+        let task = Process()
+        task.launchPath = "/usr/bin/open"
+        task.arguments = [logDir]
+        task.launch()
     }
 }

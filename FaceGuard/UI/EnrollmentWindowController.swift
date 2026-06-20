@@ -15,6 +15,10 @@ final class EnrollmentWindowController: NSWindowController {
     private let viewModel: EnrollmentViewModel
     /// Called when enrollment completes successfully (so AppDelegate can load the new embedding).
     var onEnrollmentComplete: (() -> Void)?
+    /// Which user slot to save to (0 = primary, 1 = secondary).
+    var userSlot: Int = 0 {
+        didSet { viewModel.enroller.userSlot = userSlot }
+    }
 
     // MARK: - Initialisation
 

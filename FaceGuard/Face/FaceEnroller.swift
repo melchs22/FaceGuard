@@ -1,154 +1,183 @@
 // FaceEnroller.swift
-// FaceGuard — Orchestrates the face enrollment process.
-//
-// Enrollment flow:
-//  1. Camera frames arrive via captureFrame(_:)
-//  2. FaceDetector extracts embeddings from each frame
-//  3. After collecting targetSampleCount good embeddings over enrollmentDuration seconds,
-//     they are averaged into a single master embedding
-//  4. The master embedding is saved via EmbeddingStore
-//  5. Completion/failure callbacks notify the EnrollmentView
+// FaceGuard — Orchestrates multi-phase Face ID-style enrollment.
 
 import Foundation
 import AppKit
+import CoreImage
 
 // MARK: - Enrollment State
 
-/// Represents the current state of the enrollment process.
+enum EnrollmentPhase: Int, CaseIterable {
+    case center = 0
+    case leftTilt
+    case rightTilt
+    case upTilt
+    
+    var instruction: String {
+        switch self {
+        case .center:    return "Look straight at the camera"
+        case .leftTilt:  return "Slowly tilt your head left"
+        case .rightTilt: return "Slowly tilt your head right"
+        case .upTilt:    return "Look up slightly"
+        }
+    }
+    
+    var totalPhases: Int { 4 }
+}
+
 enum EnrollmentState {
     case idle
-    case enrolling(progress: Double, countdown: Int)
+    case enrolling(progress: Double, phase: EnrollmentPhase, instruction: String)
+    case lowLight(progress: Double)
     case success
     case failed(reason: String)
 }
 
 // MARK: - FaceEnroller
 
-/// Collects multiple face embeddings during enrollment and averages them.
 final class FaceEnroller {
 
     // MARK: - Configuration
 
-    /// Number of good embeddings to collect before computing the master embedding.
-    private let targetSampleCount = 10
-    /// Total time the enrollment window stays open (seconds).
-    private let enrollmentDuration: TimeInterval = 5.0
+    /// Number of good embeddings to collect PER PHASE.
+    private let samplesPerPhase = 5
+    private var targetSampleCount: Int { samplesPerPhase * EnrollmentPhase.allCases.count }
+    
+    private let captureInterval: TimeInterval = 0.15
+    private let luminanceThreshold: Float = 0.20
+    var userSlot: Int = 0
 
     // MARK: - Callbacks
 
-    /// Called on the main thread whenever enrollment state changes.
     var onStateChange: ((EnrollmentState) -> Void)?
-    /// Called on the main thread when a valid face is detected (for UI overlay).
     var onFaceDetected: ((CGRect) -> Void)?
+    var onPhaseChange: ((EnrollmentPhase, String) -> Void)?
 
     // MARK: - Private State
 
     private let detector = FaceDetector()
-    /// Accumulated good embeddings collected so far.
+    private let ciContext = CIContext(options: nil)
+
     private var collectedEmbeddings: [[Float]] = []
-    /// The last good thumbnail to save as the enrolled face image.
+    private var currentPhaseIndex = 0
+    private var phaseSamplesCount = 0
+    
     private var lastThumbnail: NSImage?
-    /// Whether enrollment is currently in progress.
     private(set) var isEnrolling = false
-    /// When enrollment started.
-    private var startTime: Date?
-    /// Serial queue for enrollment frame processing.
+    private var lastCaptureTime: Date?
+    
     private let queue = DispatchQueue(label: "com.faceguard.enrolling", qos: .userInitiated)
-    /// Timer that fires the countdown ticks.
-    private var countdownTimer: Timer?
-    /// Current countdown value displayed in the UI.
-    private var countdown: Int = 3
 
     // MARK: - Public API
 
-    /// Starts the enrollment session. Resets any previous partial state.
     func startEnrollment() {
         queue.async { [weak self] in
             guard let self = self else { return }
             self.collectedEmbeddings.removeAll()
+            self.currentPhaseIndex = 0
+            self.phaseSamplesCount = 0
             self.lastThumbnail = nil
             self.isEnrolling   = true
-            self.startTime     = Date()
-            self.countdown     = 3
+            self.lastCaptureTime = nil
 
             AppLogger.shared.info("FaceEnroller: Enrollment started.")
-            self.notifyState(.enrolling(progress: 0, countdown: 3))
-
-            // Fire countdown ticks on the main thread.
-            DispatchQueue.main.async {
-                self.startCountdownTimer()
-            }
+            self.notifyPhaseChange()
+            self.notifyState(.enrolling(progress: 0, phase: .center, instruction: EnrollmentPhase.center.instruction))
         }
     }
 
-    /// Stops enrollment immediately without saving.
     func cancelEnrollment() {
         isEnrolling = false
-        stopCountdownTimer()
         collectedEmbeddings.removeAll()
         notifyState(.idle)
         AppLogger.shared.info("FaceEnroller: Enrollment cancelled.")
     }
 
-    /// Feed a pixel buffer into the enroller during an active enrollment session.
-    /// Should be called on the camera's output queue.
     func captureFrame(_ pixelBuffer: CVPixelBuffer) {
         guard isEnrolling else { return }
+
+        if let last = lastCaptureTime, Date().timeIntervalSince(last) < captureInterval { return }
 
         queue.async { [weak self] in
             guard let self = self, self.isEnrolling else { return }
 
+            let luminance = self.calculateLuminance(of: pixelBuffer)
+            let progress = Double(self.collectedEmbeddings.count) / Double(self.targetSampleCount)
+            let currentPhase = EnrollmentPhase(rawValue: self.currentPhaseIndex) ?? .center
+
+            if luminance < self.luminanceThreshold {
+                self.notifyState(.lowLight(progress: progress))
+                return
+            }
+
             let result = self.detector.detect(in: pixelBuffer)
             switch result {
-            case .embedding(let embedding, let bbox, let image):
+            case .embedding(let embedding, let bbox, let image, _):
+                self.lastCaptureTime = Date()
                 self.collectedEmbeddings.append(embedding)
+                self.phaseSamplesCount += 1
                 if let image = image { self.lastThumbnail = image }
+                
                 DispatchQueue.main.async { self.onFaceDetected?(bbox) }
 
-                let progress = Double(self.collectedEmbeddings.count) / Double(self.targetSampleCount)
-                self.notifyState(.enrolling(progress: min(progress, 1.0), countdown: self.countdown))
+                // Check phase progression
+                if self.phaseSamplesCount >= self.samplesPerPhase {
+                    self.currentPhaseIndex += 1
+                    self.phaseSamplesCount = 0
+                    
+                    if self.currentPhaseIndex < EnrollmentPhase.allCases.count {
+                        self.notifyPhaseChange()
+                    }
+                }
+
+                let newProgress = Double(self.collectedEmbeddings.count) / Double(self.targetSampleCount)
+                let phase = EnrollmentPhase(rawValue: min(self.currentPhaseIndex, EnrollmentPhase.allCases.count - 1)) ?? .center
+                self.notifyState(.enrolling(progress: min(newProgress, 1.0), phase: phase, instruction: phase.instruction))
 
                 if self.collectedEmbeddings.count >= self.targetSampleCount {
                     self.finalise()
                 }
+                
             case .noFace, .faceFoundNoLandmarks:
-                // Don't advance progress; face must be clearly visible.
-                break
+                self.notifyState(.enrolling(progress: progress, phase: currentPhase, instruction: currentPhase.instruction))
             }
         }
     }
 
     // MARK: - Private Helpers
 
-    private func startCountdownTimer() {
-        countdownTimer?.invalidate()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self, self.isEnrolling else { return }
-            if self.countdown > 1 {
-                self.countdown -= 1
-                self.notifyState(.enrolling(
-                    progress: Double(self.collectedEmbeddings.count) / Double(self.targetSampleCount),
-                    countdown: self.countdown
-                ))
-            }
+    private func calculateLuminance(of pixelBuffer: CVPixelBuffer) -> Float {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let filter = CIFilter(name: "CIAreaAverage") else { return 1.0 }
+        filter.setValue(ciImage, forKey: kCIInputImageKey)
+        filter.setValue(CIVector(cgRect: ciImage.extent), forKey: kCIInputExtentKey)
+        
+        guard let outputImage = filter.outputImage else { return 1.0 }
+        
+        var bitmap = [UInt8](repeating: 0, count: 4)
+        ciContext.render(outputImage, toBitmap: &bitmap, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+        
+        let r = Float(bitmap[0])
+        let g = Float(bitmap[1])
+        let b = Float(bitmap[2])
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+    }
+
+    private func notifyPhaseChange() {
+        guard let phase = EnrollmentPhase(rawValue: currentPhaseIndex) else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onPhaseChange?(phase, phase.instruction)
         }
     }
 
-    private func stopCountdownTimer() {
-        countdownTimer?.invalidate()
-        countdownTimer = nil
-    }
-
-    /// Averages all collected embeddings and saves the result.
     private func finalise() {
         guard !collectedEmbeddings.isEmpty else {
             isEnrolling = false
-            stopCountdownTimer()
-            notifyState(.failed(reason: "No face detected. Please centre your face and try again."))
+            notifyState(.failed(reason: "No face detected. Please try again."))
             return
         }
 
-        // Average all embeddings element-wise.
+        // Average all embeddings to create the master
         let length = collectedEmbeddings.map(\.count).min() ?? 0
         var averaged = [Float](repeating: 0, count: length)
         for emb in collectedEmbeddings {
@@ -156,22 +185,25 @@ final class FaceEnroller {
         }
         averaged = averaged.map { $0 / Float(collectedEmbeddings.count) }
 
-        // L2-normalise the averaged embedding.
+        // Normalise
         let mag = sqrt(averaged.map { $0 * $0 }.reduce(0, +))
         if mag > 0 { averaged = averaged.map { $0 / mag } }
 
         isEnrolling = false
-        stopCountdownTimer()
 
-        // Persist to disk.
+        // Create the pool instead of raw embedding
+        var pool = EmbeddingPool(master: averaged)
+        pool.lastUpdated = Date()
+
         do {
-            try EmbeddingStore.shared.saveEmbedding(averaged)
-            if let thumb = lastThumbnail { EmbeddingStore.shared.saveThumbnail(thumb) }
+            try EmbeddingStore.shared.savePool(pool, forUser: userSlot)
+            if let thumb = lastThumbnail { EmbeddingStore.shared.saveThumbnail(thumb, forUser: userSlot) }
             Settings.shared.hasEnrolled = true
-            AppLogger.shared.info("FaceEnroller: Enrollment complete — \(collectedEmbeddings.count) samples averaged.")
+            Settings.shared.authorizedUserCount = max(Settings.shared.authorizedUserCount, userSlot + 1)
+            AppLogger.shared.info("FaceEnroller: Enrollment complete (slot \(userSlot)) — 4 phases, \(collectedEmbeddings.count) samples.")
             notifyState(.success)
         } catch {
-            AppLogger.shared.error("FaceEnroller: Failed to save embedding — \(error)")
+            AppLogger.shared.error("FaceEnroller: Failed to save pool — \(error)")
             notifyState(.failed(reason: "Failed to save face data. Please try again."))
         }
     }

@@ -8,7 +8,7 @@
          The app will not appear in the Dock or App Switcher (⌘+Tab).
     ═══════════════════════════════════════════════════════════════════ -->
     <key>LSUIElement</key>
-    <true/>
+    <false/>
 
     <!-- ═══════════════════════════════════════════════════════════════
          CAMERA USAGE DESCRIPTION
@@ -42,7 +42,10 @@
     <string>1.0.0</string>
 
     <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
+    <string>FaceGuard</string>
+
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 
     <key>CFBundlePackageType</key>
     <string>APPL</string>

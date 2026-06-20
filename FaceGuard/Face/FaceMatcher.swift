@@ -11,11 +11,11 @@ import Foundation
 
 /// The outcome of a face match evaluation.
 enum MatchDecision {
-    /// The face belongs to the authorised user (score ≥ threshold).
-    case authorised(score: Float)
+    /// The face belongs to an authorised user.
+    case authorised(score: Float, userSlot: Int)
     /// A face was detected but it doesn't match (score < threshold).
     case unauthorised(score: Float)
-    /// No face was present in the frame; score is not applicable.
+    /// No face was present in the frame.
     case noFace
 }
 
@@ -26,8 +26,8 @@ final class FaceMatcher {
 
     // MARK: - Properties
 
-    /// The authorised face embedding, loaded from EmbeddingStore on startup.
-    private(set) var authorisedEmbedding: [Float]?
+    /// All authorized face embedding pools (primary + secondary users).
+    var authorizedPools: [EmbeddingPool] = []
 
     /// Circular buffer storing the last N similarity scores.
     private var scoreBuffer: [Float] = []
@@ -43,23 +43,22 @@ final class FaceMatcher {
 
     // MARK: - Embedding Management
 
-    /// Loads the authorised embedding from disk and resets the score buffer.
+    /// Loads all authorized pools from disk and resets the score buffer.
     func loadEmbedding() {
-        if let stored = EmbeddingStore.shared.loadEmbedding() {
-            authorisedEmbedding = stored.embedding
-            scoreBuffer.removeAll()
-            AppLogger.shared.info("FaceMatcher: Authorised embedding loaded (\(stored.embedding.count) floats).")
-        } else {
-            authorisedEmbedding = nil
+        authorizedPools = EmbeddingStore.shared.loadAllPools()
+        scoreBuffer.removeAll()
+        if authorizedPools.isEmpty {
             AppLogger.shared.warning("FaceMatcher: No authorised embedding available.")
+        } else {
+            AppLogger.shared.info("FaceMatcher: \(authorizedPools.count) authorized pool(s) loaded.")
         }
     }
 
-    /// Updates the authorised embedding directly (e.g., after a fresh enrollment).
-    func updateEmbedding(_ embedding: [Float]) {
-        authorisedEmbedding = embedding
+    /// Updates the authorized pools directly (e.g., after a fresh enrollment or adaptation).
+    func updatePools(_ pools: [EmbeddingPool]) {
+        self.authorizedPools = pools
         scoreBuffer.removeAll()
-        AppLogger.shared.info("FaceMatcher: Authorised embedding updated in memory.")
+        AppLogger.shared.info("FaceMatcher: Pools updated in memory.")
     }
 
     /// Clears the rolling buffer (e.g., when the app resumes after a pause).
@@ -69,24 +68,28 @@ final class FaceMatcher {
 
     // MARK: - Core Matching
 
-    /// Evaluates a live embedding against the authorised one.
-    ///
-    /// The decision is based on the rolling average of the last `bufferSize` frames,
-    /// not just the single current frame, to prevent single-frame false positives.
-    ///
-    /// - Parameter liveEmbedding: The embedding extracted from the current camera frame.
-    /// - Returns: A MatchDecision representing the rolling-average outcome.
-    func evaluate(liveEmbedding: [Float]) -> MatchDecision {
-        guard let authorised = authorisedEmbedding else {
+    /// Evaluates a live embedding against all authorized pools.
+    /// Returns the MatchDecision and the raw highest similarity score found.
+    func evaluate(liveEmbedding: [Float]) -> (decision: MatchDecision, rawScore: Float) {
+        guard !authorizedPools.isEmpty else {
             AppLogger.shared.warning("FaceMatcher: evaluate() called but no authorised embedding is loaded.")
-            return .noFace
+            return (.noFace, 0)
         }
 
-        // Compute cosine similarity for this frame.
-        let score = cosineSimilarity(liveEmbedding, authorised)
+        // Find the best score across all pools (and all supplementals within those pools)
+        var bestScore: Float = 0
+        var bestUserSlot: Int = 0
+        
+        for i in 0..<authorizedPools.count {
+            let result = authorizedPools[i].bestMatch(for: liveEmbedding)
+            if result.score > bestScore {
+                bestScore = result.score
+                bestUserSlot = i
+            }
+        }
 
         // Push to rolling buffer, capping at bufferSize.
-        scoreBuffer.append(score)
+        scoreBuffer.append(bestScore)
         if scoreBuffer.count > bufferSize {
             scoreBuffer.removeFirst()
         }
@@ -97,16 +100,17 @@ final class FaceMatcher {
 
         let decision: MatchDecision
         if averageScore >= threshold {
-            decision = .authorised(score: averageScore)
+            decision = .authorised(score: averageScore, userSlot: bestUserSlot)
         } else {
             decision = .unauthorised(score: averageScore)
         }
 
-        // Log every decision (verbose — consider removing for production).
-        AppLogger.shared.debug("FaceMatcher: raw=\(String(format: "%.3f", score)) avg=\(String(format: "%.3f", averageScore)) → \(decision)")
 
-        return decision
+        AppLogger.shared.debug("FaceMatcher: raw=\(String(format: "%.3f", bestScore)) avg=\(String(format: "%.3f", averageScore)) → \(decision)")
+
+        return (decision, bestScore)
     }
+
 
     // MARK: - Similarity Maths
 
@@ -144,9 +148,9 @@ final class FaceMatcher {
 extension MatchDecision: CustomDebugStringConvertible {
     var debugDescription: String {
         switch self {
-        case .authorised(let score):   return "authorised(\(String(format: "%.2f", score)))"
-        case .unauthorised(let score): return "unauthorised(\(String(format: "%.2f", score)))"
-        case .noFace:                  return "noFace"
+        case .authorised(let score, let userSlot): return "authorised(score: \(String(format: "%.2f", score)), slot: \(userSlot))"
+        case .unauthorised(let score):             return "unauthorised(\(String(format: "%.2f", score)))"
+        case .noFace:                              return "noFace"
         }
     }
 }

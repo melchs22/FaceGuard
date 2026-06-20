@@ -137,6 +137,11 @@ log_timestamp "Destination: $STAGING_DIR/Applications/"
 cp -R "$APP_PATH" "$STAGING_DIR/Applications/"
 log_timestamp ".app copied to staging directory"
 
+# Ad-hoc sign the application to ensure it can be opened locally, even if the user lacks a Developer ID certificate.
+log_timestamp "Applying ad-hoc code signature..."
+codesign --force --deep -s - "$STAGING_DIR/Applications/$PROJECT_NAME.app"
+
+
 log_timestamp "Running pkgbuild..."
 log_timestamp "Bundle ID: $BUNDLE_ID"
 log_timestamp "Version: $VERSION"

@@ -12,7 +12,7 @@ import SwiftUI
 
 // MARK: - MenuBarController
 
-final class MenuBarController {
+final class MenuBarController: NSObject {
 
     // MARK: - Status Item
 
@@ -41,8 +41,9 @@ final class MenuBarController {
 
     // MARK: - Initialisation
 
-    init() {
+    override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
         buildMenu()
         updateIcon(for: .noFace(secondsRemaining: 0))
         AppLogger.shared.info("MenuBarController: Initialised.")
@@ -105,6 +106,20 @@ final class MenuBarController {
                                   keyEquivalent: "")
         logItem.target = self
         statusMenu.addItem(logItem)
+
+        // ── Security Dashboard ───────────────────────────────────────────
+        let dashItem = NSMenuItem(title: "📊  Security Dashboard",
+                                   action: #selector(handleDashboard),
+                                   keyEquivalent: "d")
+        dashItem.target = self
+        statusMenu.addItem(dashItem)
+
+        // ── Enroll Second User ───────────────────────────────────────────
+        let secondUserItem = NSMenuItem(title: "👥  Enroll Second User",
+                                         action: #selector(handleEnrollSecondUser),
+                                         keyEquivalent: "")
+        secondUserItem.target = self
+        statusMenu.addItem(secondUserItem)
 
         // ── Preferences ──────────────────────────────────────────────────
         let prefsItem = NSMenuItem(title: "⚙️  Preferences…",
@@ -170,6 +185,10 @@ final class MenuBarController {
         case .enrolling:
             statusLabelItem.attributedTitle = styledMenuHeader("FaceGuard — 🔵 Enrolling…")
             matchScoreItem.isHidden = true
+
+        case .blurActive:
+            statusLabelItem.attributedTitle = styledMenuHeader("FaceGuard — 🟣 Privacy Blur Active")
+            matchScoreItem.isHidden = true
         }
     }
 
@@ -180,11 +199,12 @@ final class MenuBarController {
 
         let (symbolName, colorHex): (String, String) = {
             switch status {
-            case .authorized:                  return ("eye.fill",   "#34C759")
-            case .unauthorized:                return ("lock.fill",  "#FF3B30")
-            case .noFace:                      return ("eye.slash",  "#8E8E93")
-            case .paused:                      return ("eye",        "#FFD60A")
-            case .enrolling:                   return ("camera.fill","#0A84FF")
+            case .authorized:                  return ("eye.fill",    "#34C759")
+            case .unauthorized:                return ("lock.fill",   "#FF3B30")
+            case .noFace:                      return ("eye.slash",   "#8E8E93")
+            case .paused:                      return ("eye",         "#FFD60A")
+            case .enrolling:                   return ("camera.fill", "#0A84FF")
+            case .blurActive:                  return ("eye.slash.fill", "#BF5AF2")
             }
         }()
 
@@ -234,6 +254,14 @@ final class MenuBarController {
         onViewLog?()
     }
 
+    @objc private func handleDashboard() {
+        NotificationCenter.default.post(name: .openDashboardWindow, object: nil)
+    }
+
+    @objc private func handleEnrollSecondUser() {
+        NotificationCenter.default.post(name: .enrollSecondUser, object: nil)
+    }
+
     @objc private func handlePreferences() {
         onPreferences?()
     }
@@ -241,6 +269,15 @@ final class MenuBarController {
     @objc private func handleQuit() {
         onQuit?()
     }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let openEnrollmentWindow  = Notification.Name("FaceGuard.openEnrollmentWindow")
+    static let openPreferencesWindow = Notification.Name("FaceGuard.openPreferencesWindow")
+    static let openDashboardWindow   = Notification.Name("FaceGuard.openDashboardWindow")
+    static let enrollSecondUser      = Notification.Name("FaceGuard.enrollSecondUser")
 }
 
 // MARK: - NSColor Hex Extension
