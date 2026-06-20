@@ -24,19 +24,21 @@ final class MenuBarController: NSObject {
 
     // MARK: - Dynamic Menu Items (updated on status change)
 
-    private var statusLabelItem: NSMenuItem!
-    private var matchScoreItem:  NSMenuItem!
-    private var resumeItem:      NSMenuItem!
-    private var pauseItem:       NSMenuItem!
+    private var statusLabelItem:    NSMenuItem!
+    private var matchScoreItem:     NSMenuItem!
+    private var resumeItem:         NSMenuItem!
+    private var pauseItem:          NSMenuItem!
+    private var meetingToggleItem:  NSMenuItem!
+    private var bgWarningItem:      NSMenuItem!
 
     // MARK: - Callbacks (set by AppDelegate)
 
-    var onReEnroll:   (() -> Void)?
-    var onPause:      ((Int?) -> Void)?  // nil = indefinite
-    var onResume:     (() -> Void)?
-    var onQuit:       (() -> Void)?
+    var onReEnroll:    (() -> Void)?
+    var onPause:       ((Int?) -> Void)?  // nil = indefinite
+    var onResume:      (() -> Void)?
+    var onQuit:        (() -> Void)?
     var onPreferences: (() -> Void)?
-    var onViewLog:    (() -> Void)?
+    var onViewLog:     (() -> Void)?
 
     // MARK: - Current State
 
@@ -75,6 +77,12 @@ final class MenuBarController: NSObject {
         matchScoreItem.isEnabled = false
         matchScoreItem.isHidden  = true
         statusMenu.addItem(matchScoreItem)
+
+        // ── Background App Warning (hidden until a conflicting app is detected) ──
+        bgWarningItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        bgWarningItem.isEnabled = false
+        bgWarningItem.isHidden  = true
+        statusMenu.addItem(bgWarningItem)
 
         statusMenu.addItem(.separator())
 
@@ -131,6 +139,15 @@ final class MenuBarController: NSObject {
         secondUserItem.target = self
         statusMenu.addItem(secondUserItem)
 
+        // ── Meeting Mode Toggle ───────────────────────────────────────────
+        meetingToggleItem = NSMenuItem(
+            title: Settings.shared.meetingModeEnabled ? "🎥  Meeting Mode: On" : "🎥  Meeting Mode: Off",
+            action: #selector(handleToggleMeetingMode),
+            keyEquivalent: "m"
+        )
+        meetingToggleItem.target = self
+        statusMenu.addItem(meetingToggleItem)
+
         // ── Preferences ──────────────────────────────────────────────────
         let prefsItem = NSMenuItem(title: "⚙️  Preferences…",
                                     action: #selector(handlePreferences),
@@ -168,6 +185,20 @@ final class MenuBarController: NSObject {
         // Pause/resume item visibility
         pauseItem.isHidden  = isPaused
         resumeItem.isHidden = !isPaused
+
+        // Meeting mode toggle label stays in sync
+        meetingToggleItem.title = Settings.shared.meetingModeEnabled ? "🎥  Meeting Mode: On" : "🎥  Meeting Mode: Off"
+        meetingToggleItem.state = Settings.shared.meetingModeEnabled ? .on : .off
+
+        // Background app warning
+        let conflicting = MeetingModeDetector.shared.conflictingBackgroundApps
+        if conflicting.isEmpty {
+            bgWarningItem.isHidden = true
+        } else {
+            let names = conflicting.joined(separator: ", ")
+            bgWarningItem.title = "⚠️  Background app may interfere: \(names)"
+            bgWarningItem.isHidden = false
+        }
 
         switch status {
         case .authorized(let score):
@@ -282,6 +313,13 @@ final class MenuBarController: NSObject {
 
     @objc private func handlePreferences() {
         onPreferences?()
+    }
+
+    @objc private func handleToggleMeetingMode() {
+        Settings.shared.meetingModeEnabled.toggle()
+        meetingToggleItem.title = Settings.shared.meetingModeEnabled ? "🎥  Meeting Mode: On" : "🎥  Meeting Mode: Off"
+        meetingToggleItem.state = Settings.shared.meetingModeEnabled ? .on : .off
+        AppLogger.shared.info("MenuBarController: Meeting mode set to \(Settings.shared.meetingModeEnabled).")
     }
 
     @objc private func handleQuit() {

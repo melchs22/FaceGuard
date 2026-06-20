@@ -112,7 +112,7 @@ final class FaceEnroller {
 
             let result = self.detector.detect(in: pixelBuffer)
             switch result {
-            case .embedding(let embedding, let bbox, let image, _):
+            case .embedding(let embedding, let bbox, let image, _, _):
                 self.lastCaptureTime = Date()
                 self.collectedEmbeddings.append(embedding)
                 self.phaseSamplesCount += 1

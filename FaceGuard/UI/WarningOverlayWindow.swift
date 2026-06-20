@@ -116,12 +116,11 @@ final class WarningOverlayWindow {
     }
 
     private func startCountdown() {
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
 
             if self.countdownValue > 1 {
                 self.countdownValue -= 1
-                // Force SwiftUI view refresh by recreating the binding.
                 self.refreshViews()
             } else {
                 timer.invalidate()
@@ -129,6 +128,10 @@ final class WarningOverlayWindow {
                 self.completion?()
             }
         }
+        // Schedule on .common mode so it fires even when the RunLoop is in event-tracking mode.
+        // Without this, the countdown stalls until the user moves the cursor.
+        RunLoop.main.add(timer, forMode: .common)
+        countdownTimer = timer
     }
 
     private func refreshViews() {

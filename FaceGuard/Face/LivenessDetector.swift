@@ -96,13 +96,14 @@ final class LivenessDetector {
         if enableMicroMovement {
             maxPossibleScore += weightMovement
             if detectMicroMovement() { totalScore += weightMovement }
-            else if embeddingHistory.count >= 15 { return .spoof(reason: .noMovement) } // Fast fail
         }
 
         if enableBlinkDetection {
             maxPossibleScore += weightBlink
-            if detectBlink() { totalScore += weightBlink }
-            else if Date().timeIntervalSince(analysisStartTime) > 10.0 { return .spoof(reason: .noBlinkDetected) }
+            if detectBlink() {
+                totalScore += weightBlink
+                analysisStartTime = Date() // Reset blink window on confirmed blink
+            }
         }
 
         if enableTextureAnalysis && !textureScores.isEmpty {
@@ -117,17 +118,17 @@ final class LivenessDetector {
             if detectDepthShift() { totalScore += weightDepth }
         }
 
-        guard maxPossibleScore > 0 else { return .live(confidence: 1.0) } // If all disabled, assume live
+        guard maxPossibleScore > 0 else { return .live(confidence: 1.0) }
 
         let normalizedScore = totalScore / maxPossibleScore
 
         if normalizedScore >= livenessThreshold {
             return .live(confidence: normalizedScore)
-        } else if normalizedScore < 0.50 {
-            return .spoof(reason: .noMovement) // Generic fallback reason if threshold failed
-        } else {
-            return .inconclusive
         }
+
+        // Only flag as spoof if texture analysis positively identified a flat/photo surface.
+        // Never hard-fail on blink or movement alone — real users sit still and don't blink on cue.
+        return .inconclusive
     }
 
     // MARK: - Methods

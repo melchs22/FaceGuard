@@ -2,50 +2,73 @@ name: Build and Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '**'
   workflow_dispatch:
 
 jobs:
   build-and-release:
     runs-on: macos-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
+
       - name: Generate Icon
         run: |
           chmod +x scratch/make_icon.sh || true
-          bash scratch/make_icon.sh || bash .gemini/antigravity/brain/30626109-205a-4347-aa86-407e029b0d0c/scratch/make_icon.sh || true
+          bash scratch/make_icon.sh || true
 
       - name: Make install script executable
         run: chmod +x install.sh
-        
+
       - name: Build and install
-        run: sudo ./install.sh
-        
+        run: sudo ./install.sh <<< "y"
+
+      - name: Get version and build metadata
+        id: meta
+        run: |
+          VERSION=$(grep 'VERSION=' install.sh | head -1 | cut -d'"' -f2)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BRANCH=$(echo "${{ github.ref_name }}" | sed 's|/|-|g')
+          TAG="v${VERSION}-${BRANCH}-${SHORT_SHA}"
+          PKG_NAME="FaceGuard-${VERSION}-${SHORT_SHA}.pkg"
+          echo "version=$VERSION"     >> $GITHUB_OUTPUT
+          echo "tag=$TAG"             >> $GITHUB_OUTPUT
+          echo "pkg_name=$PKG_NAME"   >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH"       >> $GITHUB_OUTPUT
+
       - name: Create package
         run: |
           mkdir -p staging/Applications
           cp -R /Applications/FaceGuard.app staging/Applications/
-          pkgbuild --identifier com.yourname.FaceGuard --version 1.0.0 --install-location / --root staging FaceGuard-1.0.0.pkg
-          
-      - name: Get version
-        id: get_version
-        run: |
-          VERSION=$(grep "VERSION=" install.sh | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "App version: $VERSION"
-          
+          codesign --force --deep -s - staging/Applications/FaceGuard.app
+          pkgbuild \
+            --identifier com.yourname.FaceGuard \
+            --version ${{ steps.meta.outputs.version }} \
+            --install-location / \
+            --root staging \
+            ${{ steps.meta.outputs.pkg_name }}
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: FaceGuard-1.0.0.pkg
-          name: FaceGuard ${{ steps.get_version.outputs.version }}
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.get_version.outputs.version) }}
+          files: ${{ steps.meta.outputs.pkg_name }}
+          name: "FaceGuard ${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.branch }}@${{ steps.meta.outputs.short_sha }})"
+          tag_name: ${{ steps.meta.outputs.tag }}
           draft: false
-          prerelease: false
+          prerelease: ${{ github.ref_name != 'main' && github.ref_name != 'master' }}
           generate_release_notes: true
+          body: |
+            ## FaceGuard ${{ steps.meta.outputs.version }}
+
+            **Branch:** `${{ steps.meta.outputs.branch }}`
+            **Commit:** `${{ github.sha }}`
+
+            ### Install
+            Download and double-click the `.pkg` file to install to `/Applications`.
+
+            > Releases from `main`/`master` are marked stable. All other branches are pre-releases.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

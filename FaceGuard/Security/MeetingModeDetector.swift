@@ -23,13 +23,27 @@ final class MeetingModeDetector {
         "com.bluejeans.BlueJeans"
     ]
 
-    /// Returns true if a known meeting application is currently running and active.
+    /// Returns true if a known meeting application is currently running and active (frontmost).
     var isMeetingActive: Bool {
         guard Settings.shared.meetingModeEnabled else { return false }
         let running = NSWorkspace.shared.runningApplications
         return running.contains { app in
             guard let bundleID = app.bundleIdentifier else { return false }
             return meetingAppBundleIDs.contains(bundleID) && app.isActive
+        }
+    }
+
+    /// Returns display names of meeting apps running in the background (not frontmost).
+    /// Used to warn the user that these apps may affect camera or performance.
+    var conflictingBackgroundApps: [String] {
+        let running = NSWorkspace.shared.runningApplications
+        return running.compactMap { app in
+            guard let bundleID = app.bundleIdentifier,
+                  meetingAppBundleIDs.contains(bundleID),
+                  !app.isActive,
+                  app.activationPolicy == .regular
+            else { return nil }
+            return app.localizedName ?? bundleID
         }
     }
 }
