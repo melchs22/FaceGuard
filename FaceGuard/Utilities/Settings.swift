@@ -48,7 +48,7 @@ final class Settings {
     // MARK: - Face Matching
 
     /// Cosine similarity threshold (0.60 – 0.90). Faces scoring above this are authorised.
-    @UserDefault("similarity_threshold", defaultValue: 0.75)
+    @UserDefault("similarity_threshold", defaultValue: 0.40)
     var similarityThreshold: Double
 
     /// Number of consecutive frames in the rolling average buffer.

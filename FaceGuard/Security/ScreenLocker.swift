@@ -43,7 +43,7 @@ final class ScreenLocker {
 
         if shouldWarn {
             let duration = Settings.shared.warningCountdownDuration
-            WarningOverlayWindow.shared.show(countdown: duration) { [weak self] in
+            WarningOverlayWindow.shared.show(countdown: duration, reason: reason) { [weak self] in
                 self?.performLock(reason: reason)
             }
         } else {

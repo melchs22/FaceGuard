@@ -46,21 +46,29 @@ struct EmbeddingPool: Codable {
 
     // MARK: - Core Functions
 
-    /// Finds the highest similarity score against the master and all supplementals.
-    mutating func bestMatch(for liveEmbedding: [Float]) -> (score: Float, source: EmbeddingSource) {
-        var bestScore = cosineSimilarity(master, liveEmbedding)
+    /// Finds the minimum euclidean distance against master and all supplementals.
+    /// Lower distance = better match. Returns the best (lowest) distance.
+    mutating func bestDistance(for liveEmbedding: [Float]) -> Float {
+        var bestDist = euclideanDistance(master, liveEmbedding)
         var bestSource = EmbeddingSource.master
 
         for (index, supplemental) in supplementals.enumerated() {
-            let score = cosineSimilarity(supplemental, liveEmbedding)
-            if score > bestScore {
-                bestScore = score
+            let dist = euclideanDistance(supplemental, liveEmbedding)
+            if dist < bestDist {
+                bestDist = dist
                 bestSource = .supplemental(index: index)
             }
         }
 
         totalAuthCount += 1
-        return (bestScore, bestSource)
+        return bestDist
+    }
+
+    /// Legacy cosine similarity entry point — kept for AdaptiveLearner compatibility.
+    mutating func bestMatch(for liveEmbedding: [Float]) -> (score: Float, source: EmbeddingSource) {
+        // Convert distance to a similarity-like score for legacy callers
+        let dist = bestDistance(for: liveEmbedding)
+        return (1.0 - min(dist, 1.0), .master)
     }
 
     /// Adds a new supplemental embedding, evicting the oldest if at capacity.
@@ -104,7 +112,15 @@ struct EmbeddingPool: Codable {
         adaptationHistory.append(AdaptationEvent(type: .masterUpdated, similarity: scoreAtCapture))
     }
 
-    // MARK: - Helper
+    // MARK: - Distance / Similarity Helpers
+
+    func euclideanDistance(_ a: [Float], _ b: [Float]) -> Float {
+        let len = min(a.count, b.count)
+        guard len > 0 else { return Float.greatestFiniteMagnitude }
+        var sum: Float = 0
+        for i in 0..<len { let d = a[i] - b[i]; sum += d * d }
+        return sqrt(sum)
+    }
 
     private func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
         let length = min(a.count, b.count)
