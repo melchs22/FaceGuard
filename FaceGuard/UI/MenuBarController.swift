@@ -18,6 +18,9 @@ final class MenuBarController: NSObject {
 
     private let statusItem: NSStatusItem
     private var statusMenu: NSMenu = NSMenu()
+    
+    // Ensure the status item is retained
+    private var statusItemRetainer: NSStatusItem?
 
     // MARK: - Dynamic Menu Items (updated on status change)
 
@@ -43,10 +46,17 @@ final class MenuBarController: NSObject {
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItemRetainer = statusItem  // Ensure strong reference
         super.init()
+        // Ensure the button always shows something even before first status update
+        if let button = statusItem.button {
+            button.title = "FG"
+            button.toolTip = "FaceGuard - Face Recognition Security"
+        }
         buildMenu()
+        statusItem.menu = statusMenu
         updateIcon(for: .noFace(secondsRemaining: 0))
-        AppLogger.shared.info("MenuBarController: Initialised.")
+        AppLogger.shared.info("MenuBarController: Initialised with status item.")
     }
 
     // MARK: - Menu Construction
@@ -197,30 +207,38 @@ final class MenuBarController: NSObject {
     private func updateIcon(for status: ProtectionStatus) {
         guard let button = statusItem.button else { return }
 
-        let (symbolName, colorHex): (String, String) = {
+        // Map each protection state to an SF Symbol + a status colour
+        let (symbolName, tintColor): (String, NSColor) = {
             switch status {
-            case .authorized:                  return ("eye.fill",    "#34C759")
-            case .unauthorized:                return ("lock.fill",   "#FF3B30")
-            case .noFace:                      return ("eye.slash",   "#8E8E93")
-            case .paused:                      return ("eye",         "#FFD60A")
-            case .enrolling:                   return ("camera.fill", "#0A84FF")
-            case .blurActive:                  return ("eye.slash.fill", "#BF5AF2")
+            case .authorized:   return ("eye.fill",       NSColor(hex: "#34C759"))
+            case .unauthorized: return ("lock.fill",      NSColor(hex: "#FF3B30"))
+            case .noFace:       return ("eye.slash",      NSColor(hex: "#8E8E93"))
+            case .paused:       return ("eye",            NSColor(hex: "#FFD60A"))
+            case .enrolling:    return ("camera.fill",    NSColor(hex: "#0A84FF"))
+            case .blurActive:   return ("eye.slash.fill", NSColor(hex: "#BF5AF2"))
             }
         }()
 
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                            .withSymbolConfiguration(config) {
-            // Tint the image
-            let tinted = image.copy() as! NSImage
-            tinted.isTemplate = false
-            tinted.lockFocus()
-            NSColor(hex: colorHex).set()
-            let rect = NSRect(origin: .zero, size: image.size)
-            rect.fill(using: .sourceAtop)
-            tinted.unlockFocus()
-            button.image = tinted
+        // Try to load SF Symbol with color
+        if let sfImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            let sizeConf  = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            let colorConf = NSImage.SymbolConfiguration(paletteColors: [tintColor])
+            let combined  = sizeConf.applying(colorConf)
+            
+            if let coloredImage = sfImage.withSymbolConfiguration(combined) {
+                coloredImage.isTemplate = false
+                button.image = coloredImage
+                button.imagePosition = .imageLeading
+                button.title = "FG"  // Keep text as fallback
+                AppLogger.shared.info("MenuBarController: Updated icon to \(symbolName)")
+                return
+            }
         }
+        
+        // Fallback to text-only
+        button.image = nil
+        button.title = "FG"
+        AppLogger.shared.warning("MenuBarController: SF Symbol \(symbolName) failed, using text fallback")
     }
 
     // MARK: - Attributed Menu Header

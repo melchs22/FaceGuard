@@ -72,38 +72,9 @@ chmod +x "$APP_BUNDLE/Contents/MacOS/$PROJECT_NAME"
 log_timestamp "Copying AppIcon.icns to: $APP_BUNDLE/Contents/Resources/"
 cp "$PROJECT_DIR/FaceGuard/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
-# Create Info.plist
-log_timestamp "Creating Info.plist..."
-cat > "$APP_BUNDLE/Contents/Info.plist" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>FaceGuard</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.yourname.FaceGuard</string>
-    <key>CFBundleName</key>
-    <string>FaceGuard</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundleVersion</key>
-    <string>1.0.0</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSCameraUsageDescription</key>
-    <string>FaceGuard uses your camera to detect who is looking at your screen…</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>FaceGuard needs this to lock your screen.</string>
-</dict>
-</plist>
-EOF
+# Copy Info.plist from source (do not regenerate — source is the single source of truth)
+log_timestamp "Copying Info.plist from source..."
+cp "$PROJECT_DIR/FaceGuard/Resources/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 log_timestamp "✓ Application bundle created"
 

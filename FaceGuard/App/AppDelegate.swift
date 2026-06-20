@@ -52,8 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - applicationDidFinishLaunching
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Show dock icon.
-        NSApp.setActivationPolicy(.regular)
+        // Use .accessory so the app lives only in the menu bar (no Dock icon).
+        // Windows are shown temporarily by switching to .regular in showWindow().
+        NSApp.setActivationPolicy(.accessory)
 
         AppLogger.shared.info("FaceGuard: Application launched.")
 
@@ -84,11 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func proceedAfterPermission() {
         if Settings.shared.hasEnrolled && EmbeddingStore.shared.hasStoredEmbedding {
-            // Existing user — load embedding and start protection.
             AppLogger.shared.info("AppDelegate: Existing enrollment found. Starting protection.")
             startProtection()
         } else {
-            // First launch — run enrollment.
             AppLogger.shared.info("AppDelegate: No enrollment found. Opening enrollment window.")
             openEnrollmentWindow(autoStart: true)
         }
@@ -112,25 +111,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menuBarController.onResume = { [weak self] in
             guard let self = self else { return }
+            AppLogger.shared.info("AppDelegate: Resume button clicked.")
             Settings.shared.resumeProtection()
             self.frameProcessor.reset()
             // Re-wire protection callbacks (they may have been cleared during enrollment)
             self.rewireProtectionCallbacks()
             // Ensure camera is running
-            if !self.cameraManager.isRunning { self.cameraManager.startCapture() }
+            if !self.cameraManager.isRunning { 
+                AppLogger.shared.info("AppDelegate: Starting camera after resume.")
+                self.cameraManager.startCapture() 
+            } else {
+                AppLogger.shared.info("AppDelegate: Camera already running after resume.")
+            }
             self.menuBarController.updateStatus(.noFace(secondsRemaining: Settings.shared.noFaceLockDelay))
-            AppLogger.shared.info("AppDelegate: Protection resumed.")
+            AppLogger.shared.info("AppDelegate: Protection resumed successfully.")
         }
         menuBarController.onViewLog = {
             AppLogger.shared.openLogDirectoryInFinder()
         }
         menuBarController.onPreferences = { [weak self] in
-            self?.preferencesWindowController.showPreferences()
+            self?.showWindow(self?.preferencesWindowController)
         }
         menuBarController.onQuit = {
             AppLogger.shared.info("AppDelegate: User requested quit.")
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: - Window Activation Helper
+
+    /// Shows a window from an .accessory-policy app.
+    /// Must briefly set policy to .regular so the window can become key.
+    private func showWindow(_ controller: NSWindowController?) {
+        NSApp.setActivationPolicy(.regular)
+        controller?.showWindow(nil)
+        controller?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Biometric / Password Authentication
@@ -221,11 +237,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleOpenPreferences() {
-        preferencesWindowController.showPreferences()
+        showWindow(preferencesWindowController)
     }
 
     @objc private func handleOpenDashboard() {
+        NSApp.setActivationPolicy(.regular)
         dashboardWindowController.showDashboard()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func handleEnrollSecondUser() {
@@ -247,7 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Protection Flow
 
     private func startProtection() {
-        // Load the authorised embedding into the matcher.
+        // Ensure protection is never stuck in a paused state when starting.
+        Settings.shared.resumeProtection()
         faceMatcher.loadEmbedding()
         rewireProtectionCallbacks()
         cameraManager.startCapture()
@@ -279,7 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Enrollment Window
 
     private func openEnrollmentWindow(autoStart: Bool, userSlot: Int = 0) {
-        // Pause protection during enrollment so the frame callback is taken over.
+        // Clear frame callbacks during enrollment and ensure paused state is cleared
+        // so protection starts cleanly after enrollment completes.
+        Settings.shared.resumeProtection()
         frameProcessor.onStatusChange = nil
         frameProcessor.onLockRequired = nil
 
@@ -302,6 +323,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         enrollmentWindowController.showAndBeginEnrollment(autoStart: autoStart)
+        // For accessory-mode apps, we need to activate so window becomes key
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Pause Check Timer

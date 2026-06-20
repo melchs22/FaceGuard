@@ -29,7 +29,7 @@ final class MeetingModeDetector {
         let running = NSWorkspace.shared.runningApplications
         return running.contains { app in
             guard let bundleID = app.bundleIdentifier else { return false }
-            return meetingAppBundleIDs.contains(bundleID) && app.activationPolicy == .regular
+            return meetingAppBundleIDs.contains(bundleID) && app.isActive
         }
     }
 }

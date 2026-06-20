@@ -8,7 +8,7 @@
          The app will not appear in the Dock or App Switcher (⌘+Tab).
     ═══════════════════════════════════════════════════════════════════ -->
     <key>LSUIElement</key>
-    <false/>
+    <true/>
 
     <!-- ═══════════════════════════════════════════════════════════════
          CAMERA USAGE DESCRIPTION
